@@ -13,11 +13,27 @@ rng = np.random.default_rng(1)
 
 
 def createSparceSource(n, m, sparsity, minUniform=0.0, maxUniform=10.0, meanNormal=0.0, varNormal=1.0, scaleExp=1.0, distribution="uniform"):
-    
+    """ 
+    Create a sparse source with a given sparsity. The sparsity is the percentage of non-zero values in the source.
+    The source can be uniform, normal or exponential.
+
+    Parameters
+    ----------
+    n : int, the height of the image
+    m : int, the width of the image
+    sparsity : float, The percentage of non-zero values in the source
+
+    Returns
+    -------
+    sparseSource : np.array, the sparse source
+    """
     size = n * m
     nb_indices = int(size * sparsity)
+    
+    # Chose nb_indices indices that will be non-zero
+    indices = np.random.choice(size, nb_indices, replace=False)
 
-    indices = np.random.choice(size, nb_indices, replace=False)# choisit k indices  entre 0 et size
+    # Create a sparse source
     sparseSource = np.zeros(size)
 
     if (distribution == "uniform"):
@@ -28,25 +44,52 @@ def createSparceSource(n, m, sparsity, minUniform=0.0, maxUniform=10.0, meanNorm
         sparseSource[indices] = rng.normal(loc=meanNormal, scale=varNormal, size=nb_indices)
 
     elif (distribution == "exponential"):
-        sparseSource[indices] = rng.exponential(scale=scaleExp,size=nb_indices)  # create random real number between min and max with an exponential distribution
+        sparseSource[indices] = rng.exponential(scale=scaleExp,size=nb_indices)  
     else:
         raise Exception("this distribution does not exist")
 
-    #return np.resize(sparseSource, (n, m))
     return sparseSource
 
 
 
 def compute_phi(n,m, L):
+    """ 
+    Compute the phi operator for the NUFFT
+
+    Parameters
+    ----------
+    n : int, the height of the image
+    m : int, the width of the image
+    L : int, the number of samples
+
+    Returns
+    -------
+    phi : pycsou.abc.operator.LinOp, the phi operator
+    """
     size = n * m
     sampling = rng.choice(size, L, replace=False)
     X = 2 * np.pi * sampling / size
     phi = nt.NUFFT.type2(X, size, isign=-1, eps=1e-3, real=True)
+    print(type(phi))
     return phi
 
 
 def reconstruction_pgd(size, data_fid, regul, min_iter, tmax):
+    """
+    Reconstruction using PGD
 
+    Parameters
+    ----------
+    size : int, the size of the image
+    data_fid : pycsou.operator.func.fid.DataFidelity, the data fidelity
+    regul : pycsou.operator.func.norm.Norm, the regularization
+    min_iter : int, the minimum number of iterations of the reconstruction 
+    tmax : int, the maximum time in seconds of the reconstruction
+
+    Returns
+    -------
+    pgd.solution() : np.array, the reconstructed image
+    """
     pgd = PGD(data_fid, regul, show_progress=False, verbosity=size)
 
     pgd.fit(x0=np.zeros(size),
@@ -55,16 +98,41 @@ def reconstruction_pgd(size, data_fid, regul, min_iter, tmax):
             )
     return pgd.solution()
 
+
 def compute_mse(I_true, I_pred):
+    """
+    Compute the mean square error between two images
+
+    Parameters
+    ----------
+    I_true : np.array, the original image
+    I_pred : np.array, the reconstructed image
+
+    Returns
+    -------
+    np.square(np.subtract(I_true,I_pred)).mean() : float, the mean square error
+    """
     return np.square(np.subtract(I_true,I_pred)).mean()
 
 
 def add_noise(signal, desired_snr):
+    """
+    Add noise to a signal
+
+    Parameters
+    ----------
+    signal : np.array, the signal
+    desired_snr : float, the desired signal to noise ratio (in dB
+
+    Returns
+    -------
+    signal + noise : np.array, the noisy signal
+    """
     # Compute signal power 
     signal_power = np.sum(signal**2) / len(signal)
     noise_power = signal_power / (10**(desired_snr/10))
 
-    # Generate normal (Gaussian) noise with the appropriate power
+    # Generate normal noise with given power
     noise = np.random.normal(scale=np.sqrt(noise_power), size=len(signal))
 
     return signal + noise
@@ -73,6 +141,15 @@ def add_noise(signal, desired_snr):
 
 
 def plot1(original, reconstructed):
+    """
+    Plot the original and reconstructed images
+
+    Parameters
+    ----------
+    original : np.array, the original image
+    reconstructed : np.array, the reconstructed image
+    """
+
     # Select only non-zero values
     original_nonzero = original[original != 0]
     reconstructed_nonzero = reconstructed[original != 0]
@@ -98,13 +175,13 @@ def plot1(original, reconstructed):
 
 def main():
     
-    def positive_int(value):
-        value = float(value)
-        if value != int(value):
-            raise argparse.ArgumentTypeError("%s is not an integer" % value)
-        if value <= 0:
-            raise argparse.ArgumentTypeError("%s is not a positive integer" % value)
-        return int(value)
+    #def positive_int(value):
+        #value = float(value)
+        #if value != int(value):
+            #raise argparse.ArgumentTypeError("%s is not an integer" % value)
+        #if value <= 0:
+            #raise argparse.ArgumentTypeError("%s is not a positive integer" % value)
+        #return int(value)
 
     def threshold(value):
         value = float(value)
@@ -122,20 +199,23 @@ def main():
     n = 64
     m = 64
     threshold = args.t
+    SNR_dB = 10
 
     sparse_mat = createSparceSource(n,m, threshold, distribution=args.d) 
-    
-
-
     phi = compute_phi(n,m, n*m)
-
-    
     y = phi(sparse_mat)
-    y_noised = add_noise(y, 10)
+    y_noised = add_noise(y, SNR_dB)
 
-    lambda_factor = .1
+
     min_iterations = 3 * n * m
     tmax = 30
+    # Chose 10 values using logspace between 0 and 1
+    #xs = np.logspace(-1,0,10)
+    #mses = []
+    #for x in xs:
+
+    lambda_factor = .1
+
     lambda_ = lambda_factor * np.linalg.norm(phi.adjoint(y_noised), np.infty)
     min_iter = pycos.MaxIter(n=min_iterations)
     data_fid = .5 * nm.SquaredL2Norm().asloss(y_noised) * phi  # F
@@ -145,7 +225,10 @@ def main():
     
 
     mse = compute_mse(sparse_mat, sol)
+    #mses.append(mse)
+
     print(mse)
+    min_iterations = 3 * n * m
     plot1(sparse_mat, sol)
 
 if __name__ == "__main__":
